@@ -69,7 +69,7 @@ protected:
 		j = (j+ncubes_)%ncubes_;
 		k = (k+ncubes_)%ncubes_;
 		
-		long icube = (i*ncubes_+j)*ncubes_+k;
+		size_t icube = (i*ncubes_+j)*ncubes_+k;
 		
 		for( int ii=0; ii<(int)cubesize_; ++ii )
 			for( int jj=0; jj<(int)cubesize_; ++jj )
@@ -146,8 +146,8 @@ public:
 		rnums_.clear();
 	}
 	
-	//! access a random number
-	inline T& operator()( int i, int j, int k )
+	//! access a random number, this allocates a cube and fills it with consistent random numbers
+	inline T& operator()( int i, int j, int k, bool fillrand=true )
 	{
 		int ic, jc, kc, is, js, ks;
 		
@@ -165,7 +165,9 @@ public:
 		{	
 			//... cube has not been precomputed. fill now with random numbers
 			rnums_[ icube ] = new Meshvar<T>( cubesize_, 0, 0, 0 );
-			fill_cube(ic, jc, kc);
+
+			if( fillrand )
+				fill_cube(ic, jc, kc);
 		}
 		
 		//... determine cell in cube
@@ -174,6 +176,17 @@ public:
 		ks = (k - kc * cubesize_ + cubesize_) % cubesize_;
 		
 		return (*rnums_[ icube ])(is,js,ks);
+	}
+	
+	//! free all cubes
+	void free_all_mem( void )
+	{
+		for( unsigned i=0; i<rnums_.size(); ++i )
+			if( rnums_[i] != NULL )
+			{
+				delete rnums_[i];	
+				rnums_[i] = NULL;
+			}
 	}
 	
 	
@@ -253,7 +266,7 @@ public:
 			ifs.read( reinterpret_cast<char*> (&ny), sizeof(int) );
 			ifs.read( reinterpret_cast<char*> (&nz), sizeof(int) );
 			
-			if( nx!=A.size(0) || ny!=A.size(1) || nz!=A.size(2) )
+			if( nx!=(int)A.size(0) || ny!=(int)A.size(1) || nz!=(int)A.size(2) )
 			{	
 				LOGERR("White noise file is not aligned with array. File: [%d,%d,%d]. Mem: [%d,%d,%d].",nx,ny,nz,A.size(0),A.size(1),A.size(2));
 				throw std::runtime_error("White noise file is not aligned with array. This is an internal inconsistency. Inform a developer!");
@@ -281,7 +294,7 @@ public:
 			
 			int nx( A.size(0) ), ny( A.size(1) ), nz( A.size(2) );
 			
-			if ( (unsigned)(nx*ny*nz) != mem_cache_[ilevel-levelmin_]->size() )
+			if ( (size_t)nx*(size_t)ny*(size_t)nz != mem_cache_[ilevel-levelmin_]->size() )
 			{
 				LOGERR("White noise file is not aligned with array. File: [%d,%d,%d]. Mem: [%d,%d,%d].",nx,ny,nz,A.size(0),A.size(1),A.size(2));
 				throw std::runtime_error("White noise file is not aligned with array. This is an internal inconsistency. Inform a developer!");

@@ -37,7 +37,7 @@
 #include "transfer_function.hh"
 
 #define THE_CODE_NAME "music!"
-#define THE_CODE_VERSION "0.9b"
+#define THE_CODE_VERSION "1.0"
 
 
 namespace music
@@ -67,9 +67,8 @@ void splash(void);
 void modify_grid_for_TF( const refinement_hierarchy& rh_full, refinement_hierarchy& rh_TF, config_file& cf );
 void print_hierarchy_stats( config_file& cf, const refinement_hierarchy& rh );
 void store_grid_structure( config_file& cf, const refinement_hierarchy& rh );
-void subtract_finest_mean( grid_hierarchy& u );
-
-
+double compute_finest_mean( grid_hierarchy& u );
+double compute_finest_sigma( grid_hierarchy& u );
 
 
 void splash(void)
@@ -185,10 +184,6 @@ void print_hierarchy_stats( config_file& cf, const refinement_hierarchy& rh )
 		{
 			std::cout << "-------------------------------------------------------------\n";
 			std::cout << " - Finest level :\n";
-			/*std::cout << "      extent =  " << dx*rfac*rh.size(ilevel,0) << " x " 
-					  << dx*rfac*rh.size(ilevel,1) << " x " 
-					  << dx*rfac*rh.size(ilevel,2) << " (h-1 Mpc)**3\n\n";*/
-			
 			std::cout << "                 mtotgrid =  " << mtotgrid << " h-1 M_o\n";
 			std::cout << "            particle mass =  " << cmass*rfac3 << " h-1 M_o\n";
 			if( bbaryons )
@@ -225,30 +220,42 @@ void store_grid_structure( config_file& cf, const refinement_hierarchy& rh )
 	}
 }
 
-void subtract_finest_mean( grid_hierarchy& u )
+double compute_finest_mean( grid_hierarchy& u )
 {
-	std::cout << " - Subtracting component mean...\n";
+
 	double sum = 0.0;
 	for( int ix = 0; ix < (int)(*u.get_grid(u.levelmax())).size(0); ++ix )
 		for( int iy = 0; iy < (int)(*u.get_grid(u.levelmax())).size(1); ++iy )
 			for( int iz = 0; iz < (int)(*u.get_grid(u.levelmax())).size(2); ++iz )
-				sum += 0.5*(*u.get_grid(u.levelmax()))(ix,iy,iz);
+				sum += (*u.get_grid(u.levelmax()))(ix,iy,iz);
 	
-	sum /= (*u.get_grid(u.levelmax())).size(0)
-			* (*u.get_grid(u.levelmax())).size(1)
-			* (*u.get_grid(u.levelmax())).size(2);
+	sum /= (double)(*u.get_grid(u.levelmax())).size(0)
+			* (double)(*u.get_grid(u.levelmax())).size(1)
+			* (double)(*u.get_grid(u.levelmax())).size(2);
 	
-	std::cout << "     component mean is " << sum << std::endl;
-	
-	for( unsigned ilevel=u.levelmin(); ilevel<=u.levelmax(); ++ilevel )
-		#pragma omp parallel for
-		for( int ix = 0; ix < (int)(*u.get_grid(ilevel)).size(0); ++ix )
-			for( int iy = 0; iy < (int)(*u.get_grid(ilevel)).size(1); ++iy )
-				for( int iz = 0; iz < (int)(*u.get_grid(ilevel)).size(2); ++iz )
-					(*u.get_grid(ilevel))(ix,iy,iz) -= sum;
+	return sum;
 	
 }
 
+double compute_finest_sigma( grid_hierarchy& u )
+{
+	double sum = 0.0, sum2 = 0.0;
+	for( int ix = 0; ix < (int)(*u.get_grid(u.levelmax())).size(0); ++ix )
+		for( int iy = 0; iy < (int)(*u.get_grid(u.levelmax())).size(1); ++iy )
+			for( int iz = 0; iz < (int)(*u.get_grid(u.levelmax())).size(2); ++iz )
+			{
+				sum +=  (*u.get_grid(u.levelmax()))(ix,iy,iz);
+				sum2 +=  (*u.get_grid(u.levelmax()))(ix,iy,iz)* (*u.get_grid(u.levelmax()))(ix,iy,iz);
+			}
+
+	size_t N = (size_t)(*u.get_grid(u.levelmax())).size(0)
+		 * (size_t)(*u.get_grid(u.levelmax())).size(1)
+		 * (size_t)(*u.get_grid(u.levelmax())).size(2);
+	sum /= N;
+	sum2 /= N;
+
+	return sqrt(sum2-sum*sum);
+}
 
 /*****************************************************************************************************/
 /*****************************************************************************************************/
@@ -290,6 +297,12 @@ int main (int argc, const char * argv[])
 	LOGUSER("Running %s, version %s",THE_CODE_NAME,THE_CODE_VERSION);
 	LOGUSER("Running with a maximum of %d OpenMP threads", omp_get_max_threads() );
 	LOGUSER("Log is for run started %s",asctime( localtime(&ltime) ));
+	
+#ifdef FFTW3
+	LOGUSER("Code was compiled using FFTW version 3.x");
+#else
+	LOGUSER("Code was compiled using FFTW version 2.x");
+#endif
 	
 #ifdef SINGLETHREAD_FFTW
 	LOGUSER("Code was compiled for single-threaded FFTW");
@@ -343,8 +356,13 @@ int main (int argc, const char * argv[])
 	
 #if not defined(SINGLETHREAD_FFTW)
 #ifdef FFTW3
+	#ifdef SINGLE_PRECISION
+	fftwf_init_threads();
+	fftwf_plan_with_nthreads(omp_get_max_threads());
+	#else
 	fftw_init_threads();
 	fftw_plan_with_nthreads(omp_get_max_threads());
+	#endif
 #else
 	fftw_threads_init();
 #endif
@@ -353,6 +371,12 @@ int main (int argc, const char * argv[])
 	//------------------------------------------------------------------------------
 	//... initialize cosmology
 	//------------------------------------------------------------------------------
+	bool 
+		do_baryons	= cf.getValue<bool>("setup","baryons"),
+		do_2LPT		= cf.getValueSafe<bool>("setup","use_2LPT",false),
+		do_LLA		= cf.getValueSafe<bool>("setup","use_LLA",false),
+		do_CVM		= cf.getValueSafe<bool>("setup","center_vel",false);
+	
 	transfer_function_plugin *the_transfer_function_plugin
 		= select_transfer_function_plugin( cf );
 	
@@ -364,6 +388,13 @@ int main (int argc, const char * argv[])
 	cosmo.pnorm	= ccalc.ComputePNorm( 2.0*M_PI/boxlength );
 	cosmo.dplus	= ccalc.CalcGrowthFactor( cosmo.astart )/ccalc.CalcGrowthFactor( 1.0 );
 	cosmo.vfact = ccalc.ComputeVFact( cosmo.astart );
+
+	if( !the_transfer_function_plugin->tf_has_total0() )
+	        cosmo.pnorm *= cosmo.dplus*cosmo.dplus;
+	    
+	if( the_transfer_function_plugin->tf_velocity_units() && do_baryons )
+		cosmo.vfact = 1.0;
+
 	{
 		char tmpstr[128];
 		sprintf(tmpstr,"%.12g",cosmo.pnorm);
@@ -375,14 +406,14 @@ int main (int argc, const char * argv[])
 		
 	}
 	
+	
+	
+	
+	
 	//------------------------------------------------------------------------------
 	//... determine run parameters
 	//------------------------------------------------------------------------------
-	bool 
-		do_baryons	= cf.getValue<bool>("setup","baryons"),
-		do_2LPT		= cf.getValue<bool>("setup","use_2LPT"),
-		do_LLA		= cf.getValue<bool>("setup","use_LLA"),
-		do_CVM		= cf.getValueSafe<bool>("setup","center_velocities",false);
+
 	
 	if( !the_transfer_function_plugin->tf_is_distinct() && do_baryons )
 		std::cout	<< " - WARNING: The selected transfer function does not support\n"
@@ -390,6 +421,19 @@ int main (int argc, const char * argv[])
 		<< "            Perturbation amplitudes will be identical!" << std::endl;
 	
 
+	double kickfac = 0.0, kickfac_2LPT = 0.0;
+	
+	if( do_CVM )
+	{
+		double ztarget = 0.0;//cf.getValueSafe<double>("setup","center_vel_zfinal",0.0);
+		kickfac = ccalc.ComputeVelocityCompensation( cosmo.astart, 1./(1.+ztarget) )/cosmo.vfact;
+		kickfac_2LPT = ccalc.ComputeVelocityCompensation_2LPT( cosmo.astart, 1./(1.+ztarget) )/cosmo.vfact;
+		std::cout	<< " - Will center velocities for target redshift " << ztarget << std::endl;
+		LOGUSER("Will center velocities for target redshift %f.",ztarget);
+	}
+	
+	
+	
 	//------------------------------------------------------------------------------
 	//... determine the refinement hierarchy
 	//------------------------------------------------------------------------------
@@ -427,9 +471,10 @@ int main (int argc, const char * argv[])
 	//------------------------------------------------------------------------------
 	//... initialize the Poisson solver
 	//------------------------------------------------------------------------------
-	bool bdefd = cf.getValueSafe<bool> ( "poisson" , "fft_fine", true );
-	bool bsph  = cf.getValueSafe<bool>("setup","do_SPH",false) && do_baryons;
-	
+	bool bdefd	= cf.getValueSafe<bool> ( "poisson" , "fft_fine", true );
+	bool bglass = cf.getValueSafe<bool>("output","glass", false);
+	bool bsph	= cf.getValueSafe<bool>("setup","do_SPH",false) && do_baryons;
+	bool bbshift= bsph && !bglass;
 	
 	bool kspace	= cf.getValueSafe<bool>( "poisson", "kspace", false );
         bool kspace2LPT = kspace;
@@ -494,7 +539,7 @@ int main (int argc, const char * argv[])
 			err = the_poisson_solver->solve(f, u);
 			
 			if(!bdefd)
-				f.deallocate();
+				f.deallocate();	
 			
 			LOGUSER("Writing CDM potential");
 			the_output_plugin->write_dm_potential(u);
@@ -539,7 +584,7 @@ int main (int argc, const char * argv[])
 				std::cout << "   COMPUTING BARYON DENSITY\n";
 				std::cout << "-------------------------------------------------------------\n";
 				LOGUSER("Computing baryon density...");
-				GenerateDensityHierarchy(	cf, the_transfer_function_plugin, baryon , rh_TF, rand, f, false, bsph );
+				GenerateDensityHierarchy(	cf, the_transfer_function_plugin, baryon , rh_TF, rand, f, false, bbshift );
 				coarsen_density(rh_Poisson, f);
 				normalize_density(f);
 				
@@ -643,9 +688,15 @@ int main (int argc, const char * argv[])
 					//... multiply to get velocity
 					data_forIO *= cosmo.vfact;
 					
+					//... velocity kick to keep refined region centered?
 					if(do_CVM)
-						subtract_finest_mean(data_forIO);
-					
+					{	
+						double ukick = kickfac * compute_finest_mean(data_forIO);
+						data_forIO -= ukick;
+					}
+					double sigv = compute_finest_sigma( data_forIO );
+					std::cerr << " - velocity component " << icoord << " : sigma = " << sigv << std::endl;
+
 					LOGUSER("Writing CDM velocities");
 					the_output_plugin->write_dm_velocity(icoord, data_forIO);
 
@@ -683,6 +734,8 @@ int main (int argc, const char * argv[])
 				if(!bdefd)
 					f.deallocate();
 				
+				double uref[3];
+				
 				grid_hierarchy data_forIO(u);
 				for( int icoord = 0; icoord < 3; ++icoord )
 				{
@@ -702,10 +755,16 @@ int main (int argc, const char * argv[])
 					//... multiply to get velocity
 					data_forIO *= cosmo.vfact;
 					
-					//... we have two velocity contributions, can't do averaging at the moment
-					//if(do_CVM)
-					//	subtract_finest_mean(data_forIO);
-					
+					//... velocity kick to keep refined region centered?
+					if(do_CVM)
+					{
+						uref[icoord] = kickfac*compute_finest_mean(data_forIO);
+						data_forIO -= uref[icoord];
+					}
+				
+					double sigv = compute_finest_sigma( data_forIO );
+					std::cerr << " - velocity component " << icoord << " : sigma = " << sigv << std::endl;
+
 					LOGUSER("Writing CDM velocities");
 					the_output_plugin->write_dm_velocity(icoord, data_forIO);
 				}
@@ -719,7 +778,7 @@ int main (int argc, const char * argv[])
 				std::cout << "-------------------------------------------------------------\n";
 				LOGUSER("Computing baryon velocitites...");
 				//... do baryons
-				GenerateDensityHierarchy(	cf, the_transfer_function_plugin, vbaryon , rh_TF, rand, f, false, bsph );
+				GenerateDensityHierarchy(	cf, the_transfer_function_plugin, vbaryon , rh_TF, rand, f, false, bbshift );
 				coarsen_density(rh_Poisson, f);
 				normalize_density(f);
 				
@@ -749,9 +808,12 @@ int main (int argc, const char * argv[])
 					//... multiply to get velocity
 					data_forIO *= cosmo.vfact;
 					
-					//... we have two velocity contributions, can't do averaging at the moment
-					//if(do_CVM)
-					//	subtract_finest_mean(data_forIO);
+					//... velocity kick to keep refined region centered?
+					if( do_CVM )
+						data_forIO -= uref[icoord];
+					
+					double sigv = compute_finest_sigma( data_forIO );
+					std::cerr << " - baryon velocity component " << icoord << " : sigma = " << sigv << std::endl;
 					
 					LOGUSER("Writing baryon velocities");
 					the_output_plugin->write_gas_velocity(icoord, data_forIO);
@@ -829,8 +891,24 @@ int main (int argc, const char * argv[])
 			u2LPT *= 6.0/7.0;
 			u1 += u2LPT;
 			
+			double uref_2LPT[3];
+			
 			if( !dm_only )
-				u2LPT.deallocate();
+			{
+				if( do_CVM )
+				{
+					grid_hierarchy data_forIO(u1);
+					for( int icoord = 0; icoord < 3; ++icoord )
+					{
+						the_poisson_solver->gradient(icoord, u2LPT, data_forIO );
+						uref_2LPT[icoord] = kickfac * compute_finest_mean(data_forIO);
+					}
+					data_forIO.deallocate();
+				}
+				u2LPT.deallocate();	
+			}
+			
+			double uref[3];
 			
 			grid_hierarchy data_forIO(u1);
 			for( int icoord = 0; icoord < 3; ++icoord )
@@ -849,9 +927,21 @@ int main (int argc, const char * argv[])
 				
 				data_forIO *= cosmo.vfact;
 				
+				//... velocity kick to keep refined region centered?
 				if( do_CVM )
-					subtract_finest_mean(data_forIO);
+				{
+					uref[icoord] = kickfac * compute_finest_mean(data_forIO);
+					//std::cerr << "uref_old[" << icoord << "] = " << uref[icoord] << std::endl;
+					uref[icoord] = kickfac * compute_finest_mean(data_forIO) - 6./7. * uref_2LPT[icoord];
+					uref_2LPT[icoord] = 6./7. * kickfac_2LPT/kickfac * uref_2LPT[icoord];
+					uref[icoord] += uref_2LPT[icoord];
+					//std::cerr << "uref_new[" << icoord << "] = " << uref[icoord] << std::endl;
+					data_forIO -= uref[icoord];
+				}
 					
+				double sigv = compute_finest_sigma( data_forIO );
+				std::cerr << " - velocity component " << icoord << " : sigma = " << sigv << std::endl;
+				
 				LOGUSER("Writing CDM velocities");
 				the_output_plugin->write_dm_velocity(icoord, data_forIO);					
 				
@@ -873,7 +963,7 @@ int main (int argc, const char * argv[])
 				std::cout << "-------------------------------------------------------------\n";
 				LOGUSER("Computing baryon displacements...");
 				
-				GenerateDensityHierarchy(	cf, the_transfer_function_plugin, vbaryon , rh_TF, rand, f, false, bsph );
+				GenerateDensityHierarchy(	cf, the_transfer_function_plugin, vbaryon , rh_TF, rand, f, false, bbshift );
 				coarsen_density(rh_Poisson, f);
 				normalize_density(f);
 				
@@ -931,8 +1021,12 @@ int main (int argc, const char * argv[])
 					
 					data_forIO *= cosmo.vfact;
 					
+					//... velocity kick to keep refined region centered?
 					if( do_CVM )
-						subtract_finest_mean(data_forIO);
+						data_forIO -= uref[icoord];
+					
+					double sigv = compute_finest_sigma( data_forIO );
+					std::cerr << " - velocity component " << icoord << " : sigma = " << sigv << std::endl;
 					
 					LOGUSER("Writing baryon velocities");
 					the_output_plugin->write_gas_velocity(icoord, data_forIO);				
@@ -1082,7 +1176,7 @@ int main (int argc, const char * argv[])
 				std::cout << "-------------------------------------------------------------\n";
 				LOGUSER("Computing baryon displacements...");
 				
-				GenerateDensityHierarchy(	cf, the_transfer_function_plugin, baryon , rh_TF, rand, f, false, true );
+				GenerateDensityHierarchy(	cf, the_transfer_function_plugin, baryon , rh_TF, rand, f, false, bbshift );
 				coarsen_density(rh_Poisson, f);
 				normalize_density(f);
 				
@@ -1173,7 +1267,11 @@ int main (int argc, const char * argv[])
 	delete the_poisson_solver;
 
 #ifdef FFTW3
+	#ifdef SINGLE_PRECISION
+	fftwf_cleanup_threads();
+	#else
 	fftw_cleanup_threads();
+	#endif
 #endif
 	
 	

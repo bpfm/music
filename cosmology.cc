@@ -16,6 +16,10 @@
 #define ACC(i,j,k) ((*u.get_grid((ilevel)))((i),(j),(k)))
 #define SQR(x)	((x)*(x))
 
+#if defined(FFTW3) && defined(SINGLE_PRECISION)
+#define fftw_complex fftwf_complex
+#endif
+
 
 void compute_LLA_density( const grid_hierarchy& u, grid_hierarchy& fnew, unsigned order )
 {
@@ -180,7 +184,7 @@ void compute_2LPT_source_FFT( config_file& cf_, const grid_hierarchy& u, grid_hi
 		throw std::runtime_error("FFT 2LPT can only be run in Unigrid mode!");
 	
 	fnew = u;
-	int nx,ny,nz,nzp;
+	size_t nx,ny,nz,nzp;
 	nx = u.get_grid(u.levelmax())->size(0);
 	ny = u.get_grid(u.levelmax())->size(1);
 	nz = u.get_grid(u.levelmax())->size(2);
@@ -200,17 +204,33 @@ void compute_2LPT_source_FFT( config_file& cf_, const grid_hierarchy& u, grid_hi
 	data_23 = new fftw_real[nx*ny*nzp]; cdata_23 = reinterpret_cast<fftw_complex*> (data_23);
 	data_33 = new fftw_real[nx*ny*nzp]; cdata_33 = reinterpret_cast<fftw_complex*> (data_33);
 	
-	
-	for( int i=0; i<nx; ++i )
-		for( int j=0; j<ny; ++j )	
-			for( int k=0; k<nz; ++k )
+	#pragma omp parallel for
+	for( int i=0; i<(int)nx; ++i )
+		for( size_t j=0; j<ny; ++j )	
+			for( size_t k=0; k<nz; ++k )
 			{
-				unsigned idx = (i*ny+j)*nzp+k;
+				size_t idx = ((size_t)i*ny+j)*nzp+k;
 				data[idx] = (*u.get_grid(u.levelmax()))(i,j,k);
 			}
 	
 	//... perform FFT and Poisson solve................................
 #ifdef FFTW3
+	
+	#ifdef SINGLE_PRECISION
+	fftwf_plan
+		plan  = fftwf_plan_dft_r2c_3d(nx,ny,nz, data, cdata, FFTW_ESTIMATE),
+		iplan = fftwf_plan_dft_c2r_3d(nx,ny,nz, cdata, data, FFTW_ESTIMATE),
+		ip11  = fftwf_plan_dft_c2r_3d(nx,ny,nz, cdata_11, data_11, FFTW_ESTIMATE),
+		ip12  = fftwf_plan_dft_c2r_3d(nx,ny,nz, cdata_12, data_12, FFTW_ESTIMATE),
+		ip13  = fftwf_plan_dft_c2r_3d(nx,ny,nz, cdata_13, data_13, FFTW_ESTIMATE),
+		ip22  = fftwf_plan_dft_c2r_3d(nx,ny,nz, cdata_22, data_22, FFTW_ESTIMATE),
+		ip23  = fftwf_plan_dft_c2r_3d(nx,ny,nz, cdata_23, data_23, FFTW_ESTIMATE),
+		ip33  = fftwf_plan_dft_c2r_3d(nx,ny,nz, cdata_33, data_33, FFTW_ESTIMATE);
+	
+	fftwf_execute(plan);
+	
+	#else
+	
 	fftw_plan
 		plan  = fftw_plan_dft_r2c_3d(nx,ny,nz, data, cdata, FFTW_ESTIMATE),
 		iplan = fftw_plan_dft_c2r_3d(nx,ny,nz, cdata, data, FFTW_ESTIMATE),
@@ -223,15 +243,18 @@ void compute_2LPT_source_FFT( config_file& cf_, const grid_hierarchy& u, grid_hi
 	
 	fftw_execute(plan);
 	
+	#endif
+	
 	double kfac = 2.0*M_PI;
 	double norm = 1.0/((double)(nx*ny*nz));
 	
-	for( int i=0; i<nx; ++i )
-		for( int j=0; j<ny; ++j )	
-			for( int l=0; l<nz/2+1; ++l )
+	#pragma omp parallel for
+	for( int i=0; i<(int)nx; ++i )
+		for( size_t j=0; j<ny; ++j )	
+			for( size_t l=0; l<nz/2+1; ++l )
 			{
-				int ii = i; if(ii>nx/2) ii-=nx;
-				int jj = j; if(jj>ny/2) jj-=ny;
+				int ii = i; if(ii>(int)nx/2) ii-=nx;
+				int jj = (int)j; if(jj>(int)ny/2) jj-=ny;
 				double ki = (double)ii;
 				double kj = (double)jj;
 				double kk = (double)l;
@@ -241,7 +264,7 @@ void compute_2LPT_source_FFT( config_file& cf_, const grid_hierarchy& u, grid_hi
 				k[1] = (double)kj * kfac;
 				k[2] = (double)kk * kfac;
 				
-				unsigned idx = (i*ny+j)*nzp/2+l;
+				size_t idx = ((size_t)i*ny+j)*nzp/2+l;
 				//double re = cdata[idx][0];
 				//double im = cdata[idx][1];
 				
@@ -264,7 +287,7 @@ void compute_2LPT_source_FFT( config_file& cf_, const grid_hierarchy& u, grid_hi
 				cdata_33[idx][1] = -k[2]*k[2] * cdata[idx][1] * norm;
 				
 				
-				if( i==nx/2||j==ny/2||l==nz/2)
+				if( i==(int)nx/2||j==ny/2||l==nz/2)
 				{
 					cdata_11[idx][0] = 0.0;
 					cdata_11[idx][1] = 0.0;
@@ -295,6 +318,24 @@ void compute_2LPT_source_FFT( config_file& cf_, const grid_hierarchy& u, grid_hi
 	 cdata_23[0][0]	= 0.0; cdata_23[0][1]	= 0.0;
 	 cdata_33[0][0]	= 0.0; cdata_33[0][1]	= 0.0;*/
 	
+	
+#ifdef SINGLE_PRECISION
+	fftwf_execute(ip11);
+	fftwf_execute(ip12);
+	fftwf_execute(ip13);
+	fftwf_execute(ip22);
+	fftwf_execute(ip23);
+	fftwf_execute(ip33);
+	
+	fftwf_destroy_plan(plan);
+	fftwf_destroy_plan(iplan);
+	fftwf_destroy_plan(ip11);
+	fftwf_destroy_plan(ip12);
+	fftwf_destroy_plan(ip13);
+	fftwf_destroy_plan(ip22);
+	fftwf_destroy_plan(ip23);
+	fftwf_destroy_plan(ip33);
+#else
 	fftw_execute(ip11);
 	fftw_execute(ip12);
 	fftw_execute(ip13);
@@ -311,6 +352,7 @@ void compute_2LPT_source_FFT( config_file& cf_, const grid_hierarchy& u, grid_hi
 	fftw_destroy_plan(ip23);
 	fftw_destroy_plan(ip33);
 
+#endif
 //#endif
 	
 	
@@ -332,13 +374,13 @@ void compute_2LPT_source_FFT( config_file& cf_, const grid_hierarchy& u, grid_hi
 	double kfac = 2.0*M_PI;
 	double norm = 1.0/((double)(nx*ny*nz));
 	
-	
-	for( int i=0; i<nx; ++i )
-		for( int j=0; j<ny; ++j )	
-			for( int l=0; l<nz/2+1; ++l )
+	#pragma omp parallel for
+	for( int i=0; i<(int)nx; ++i )
+		for( size_t j=0; j<ny; ++j )	
+			for( size_t l=0; l<nz/2+1; ++l )
 			{
-				int ii = i; if(ii>nx/2) ii-=nx;
-				int jj = j; if(jj>ny/2) jj-=ny;
+				int ii = (int)i; if(ii>(int)(nx/2)) ii-=(int)nx;
+				int jj = (int)j; if(jj>(int)(ny/2)) jj-=(int)ny;
 				double ki = (double)ii;
 				double kj = (double)jj;
 				double kk = (double)l;
@@ -348,7 +390,7 @@ void compute_2LPT_source_FFT( config_file& cf_, const grid_hierarchy& u, grid_hi
 				k[1] = (double)kj * kfac;
 				k[2] = (double)kk * kfac;
 				
-				unsigned idx = (i*ny+j)*nzp/2+l;
+				size_t idx = ((size_t)i*ny+j)*nzp/2+l;
 				//double re = cdata[idx].re;
 				//double im = cdata[idx].im;
 				
@@ -371,7 +413,7 @@ void compute_2LPT_source_FFT( config_file& cf_, const grid_hierarchy& u, grid_hi
 				cdata_33[idx].im = -k[2]*k[2] * cdata[idx].im * norm;
 				
 				
-				if( i==nx/2||j==ny/2||l==nz/2)
+				if( i==(int)(nx/2)||j==ny/2||l==nz/2)
 				{
 					cdata_11[idx].re = 0.0;
 					cdata_11[idx].im = 0.0;
@@ -427,12 +469,14 @@ void compute_2LPT_source_FFT( config_file& cf_, const grid_hierarchy& u, grid_hi
 	rfftwnd_destroy_plan(iplan);
 #endif
 
+
 	//... copy data ..........................................
-	for( int i=0; i<nx; ++i )
-		for( int j=0; j<ny; ++j )	
-			for( int k=0; k<nz; ++k )
+	#pragma omp parallel for
+	for( int i=0; i<(int)nx; ++i )
+		for( size_t j=0; j<ny; ++j )	
+			for( size_t k=0; k<nz; ++k )
 			{
-				unsigned ii = (i*ny+j)*nzp+k;
+				size_t ii = ((size_t)i*ny+j)*nzp+k;
 				(*fnew.get_grid(u.levelmax()))(i,j,k) = (( data_11[ii]*data_22[ii]-data_12[ii]*data_12[ii] ) +
 														 ( data_11[ii]*data_33[ii]-data_13[ii]*data_13[ii] ) +
 														 ( data_22[ii]*data_33[ii]-data_23[ii]*data_23[ii] ) );
@@ -556,7 +600,7 @@ void compute_2LPT_source( const grid_hierarchy& u, grid_hierarchy& fnew, unsigne
 	for( int i=fnew.levelmax(); i>(int)fnew.levelmin(); --i )
 		mg_straight().restrict( (*fnew.get_grid(i)), (*fnew.get_grid(i-1)) );
 	
-	double sum = 0.0;
+	long double sum = 0.0;
 	int nx,ny,nz;
 	
 	nx = fnew.get_grid(fnew.levelmin())->size(0);
@@ -568,7 +612,7 @@ void compute_2LPT_source( const grid_hierarchy& u, grid_hierarchy& fnew, unsigne
 			for( int iz=0; iz<nz; ++iz )
 				sum += (*fnew.get_grid(fnew.levelmin()))(ix,iy,iz);
 	
-	sum /= (nx*ny*nz);
+	sum /= (double)((size_t)nx*(size_t)ny*(size_t)nz);
 	
 	for( unsigned i=fnew.levelmin(); i<=fnew.levelmax(); ++i )
 	{		

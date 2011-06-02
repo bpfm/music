@@ -14,6 +14,10 @@
 
 //#define DEGRADE_RAND1
 
+#if defined(FFTW3) && defined(SINGLE_PRECISION)
+#define fftw_complex fftwf_complex
+#endif
+
 template< typename T >
 random_numbers<T>::random_numbers( unsigned res, unsigned cubesize, long baseseed, int *x0, int *lx )
 : res_( res ), cubesize_( cubesize ), ncubes_( 1 ), baseseed_( baseseed )
@@ -195,8 +199,8 @@ random_numbers<T>::random_numbers( /*const*/ random_numbers <T>& rc, bool kdegra
 			throw std::runtime_error("type mismatch with fftw_real in k-space averaging");
 		
 		fftw_real 
-		*rfine = new fftw_real[rc.res_*rc.res_*2*(rc.res_/2+1)],
-		*rcoarse = new fftw_real[res_*res_*2*(res_/2+1)];
+		*rfine = new fftw_real[(size_t)rc.res_*(size_t)rc.res_*2*((size_t)rc.res_/2+1)],
+		*rcoarse = new fftw_real[(size_t)res_*(size_t)res_*2*((size_t)res_/2+1)];
 		
 		fftw_complex
 		*ccoarse = reinterpret_cast<fftw_complex*> (rcoarse),
@@ -204,9 +208,16 @@ random_numbers<T>::random_numbers( /*const*/ random_numbers <T>& rc, bool kdegra
 		
 		int nx(rc.res_), ny(rc.res_), nz(rc.res_), nxc(res_), nyc(res_), nzc(res_);
 #ifdef FFTW3
+	#ifdef SINGLE_PRECISION
+		fftwf_plan
+		pf = fftwf_plan_dft_r2c_3d(nx, ny, nz, rfine, cfine, FFTW_ESTIMATE),
+		ipc= fftwf_plan_dft_c2r_3d(nxc, nyc, nzc, ccoarse, rcoarse, FFTW_ESTIMATE);
+	#else
 		fftw_plan
 		pf = fftw_plan_dft_r2c_3d(nx, ny, nz, rfine, cfine, FFTW_ESTIMATE),
 		ipc= fftw_plan_dft_c2r_3d(nxc, nyc, nzc, ccoarse, rcoarse, FFTW_ESTIMATE);
+	#endif
+		
 #else
 		rfftwnd_plan 
 		pf	= rfftw3d_create_plan( nx, ny, nz, FFTW_REAL_TO_COMPLEX, FFTW_ESTIMATE|FFTW_IN_PLACE),
@@ -223,7 +234,11 @@ random_numbers<T>::random_numbers( /*const*/ random_numbers <T>& rc, bool kdegra
 				}
 		
 #ifdef FFTW3
+	#ifdef SINGLE_PRECISION
+		fftwf_execute( pf );
+	#else
 		fftw_execute( pf );
+	#endif
 #else
 #ifndef SINGLETHREAD_FFTW		
 		rfftwnd_threads_one_real_to_complex( omp_get_max_threads(), pf, rfine, NULL );
@@ -232,7 +247,7 @@ random_numbers<T>::random_numbers( /*const*/ random_numbers <T>& rc, bool kdegra
 #endif
 #endif
 		
-		double fftnorm = 1.0/(nxc*nyc*nzc);
+		double fftnorm = 1.0/((double)nxc*(double)nyc*(double)nzc);
 		
 #pragma omp parallel for
 		for( int i=0; i<nxc; i++ )
@@ -260,7 +275,11 @@ random_numbers<T>::random_numbers( /*const*/ random_numbers <T>& rc, bool kdegra
 		
 		delete[] rfine;
 #ifdef FFTW3
+	#ifdef SINGLE_PRECISION
+		fftwf_execute( ipc );
+	#else
 		fftw_execute( ipc );
+	#endif
 #else
 #ifndef SINGLETHREAD_FFTW		
 		rfftwnd_threads_one_complex_to_real( omp_get_max_threads(), ipc, ccoarse, NULL );
@@ -285,8 +304,13 @@ random_numbers<T>::random_numbers( /*const*/ random_numbers <T>& rc, bool kdegra
 		delete[] rcoarse;
 		
 #ifdef FFTW3
+	#ifdef SINGLE_PRECISION
+		fftwf_destroy_plan(pf);
+		fftwf_destroy_plan(ipc);
+	#else
 		fftw_destroy_plan(pf);
 		fftw_destroy_plan(ipc);
+	#endif
 #else
 		rfftwnd_destroy_plan(pf);
 		rfftwnd_destroy_plan(ipc);
@@ -402,23 +426,23 @@ random_numbers<T>::random_numbers( random_numbers<T>& rc, unsigned cubesize, lon
 		nxc=lx[0]/2, nyc=lx[1]/2, nzc=lx[2]/2;
 		
 		
-		fftw_real 
-		*rcoarse = new fftw_real[nxc*nyc*(nzc+2)], 
-		*rfine = new fftw_real[nx*ny*(nz+2)];
+		fftw_real *rfine = new fftw_real[nx*ny*(nz+2l)];
+		fftw_complex *cfine = reinterpret_cast<fftw_complex*> (rfine);
 		
-		fftw_complex
-		*ccoarse = reinterpret_cast<fftw_complex*> (rcoarse),
-		*cfine = reinterpret_cast<fftw_complex*> (rfine);
 #ifdef FFTW3
+	#ifdef SINGLE_PRECISION
+		fftwf_plan
+			pf  = fftwf_plan_dft_r2c_3d( nx, ny, nz, rfine, cfine, FFTW_ESTIMATE),
+			ipf	= fftwf_plan_dft_c2r_3d( nx, ny, nz, cfine, rfine, FFTW_ESTIMATE);
+	#else
 		fftw_plan
-		pc  = fftw_plan_dft_r2c_3d( nxc, nyc, nzc, rcoarse, ccoarse, FFTW_ESTIMATE),
-		pf  = fftw_plan_dft_r2c_3d( nx, ny, nz, rfine, cfine, FFTW_ESTIMATE),
-		ipf	= fftw_plan_dft_c2r_3d( nx, ny, nz, cfine, rfine, FFTW_ESTIMATE);
+			pf  = fftw_plan_dft_r2c_3d( nx, ny, nz, rfine, cfine, FFTW_ESTIMATE),
+			ipf	= fftw_plan_dft_c2r_3d( nx, ny, nz, cfine, rfine, FFTW_ESTIMATE);
+	#endif
 #else
 		rfftwnd_plan 
-		pc	= rfftw3d_create_plan( nxc, nyc, nzc, FFTW_REAL_TO_COMPLEX, FFTW_ESTIMATE|FFTW_IN_PLACE),
-		pf	= rfftw3d_create_plan( nx, ny, nz, FFTW_REAL_TO_COMPLEX, FFTW_ESTIMATE|FFTW_IN_PLACE),
-		ipf	= rfftw3d_create_plan( nx, ny, nz, FFTW_COMPLEX_TO_REAL, FFTW_ESTIMATE|FFTW_IN_PLACE);
+			pf	= rfftw3d_create_plan( nx, ny, nz, FFTW_REAL_TO_COMPLEX, FFTW_ESTIMATE|FFTW_IN_PLACE),
+			ipf	= rfftw3d_create_plan( nx, ny, nz, FFTW_COMPLEX_TO_REAL, FFTW_ESTIMATE|FFTW_IN_PLACE);
 #endif
 		
 #pragma omp parallel for
@@ -429,6 +453,22 @@ random_numbers<T>::random_numbers( random_numbers<T>& rc, unsigned cubesize, lon
 					size_t q = ((size_t)i*(size_t)ny+(size_t)j)*(size_t)(nz+2)+(size_t)k;
 					rfine[q] = (*this)(x0[0]+i,x0[1]+j,x0[2]+k);
 				}
+		//this->free_all_mem();	// temporarily free memory, allocate again later
+		
+		
+		
+		fftw_real *rcoarse = new fftw_real[nxc*nyc*(nzc+2)];
+		fftw_complex *ccoarse = reinterpret_cast<fftw_complex*> (rcoarse);
+		
+#ifdef FFTW3
+#ifdef SINGLE_PRECISION
+		fftwf_plan pc  = fftwf_plan_dft_r2c_3d( nxc, nyc, nzc, rcoarse, ccoarse, FFTW_ESTIMATE);
+#else
+		fftw_plan pc  = fftw_plan_dft_r2c_3d( nxc, nyc, nzc, rcoarse, ccoarse, FFTW_ESTIMATE);
+#endif
+#else
+		rfftwnd_plan pc	= rfftw3d_create_plan( nxc, nyc, nzc, FFTW_REAL_TO_COMPLEX, FFTW_ESTIMATE|FFTW_IN_PLACE);
+#endif		
 		
 #pragma omp parallel for
 		for( int i=0; i<(int)nxc; i++ )
@@ -439,8 +479,13 @@ random_numbers<T>::random_numbers( random_numbers<T>& rc, unsigned cubesize, lon
 					rcoarse[q] = rc(x0[0]/2+i,x0[1]/2+j,x0[2]/2+k);
 				}
 #ifdef FFTW3
+	#ifdef SINGLE_PRECISION
+		fftwf_execute( pc );
+		fftwf_execute( pf );
+	#else
 		fftw_execute( pc );
-		fftw_execute( pf );
+		fftw_execute( pf );	
+	#endif
 #else
 #ifndef SINGLETHREAD_FFTW		
 		rfftwnd_threads_one_real_to_complex( omp_get_max_threads(), pc, rcoarse, NULL );
@@ -451,9 +496,9 @@ random_numbers<T>::random_numbers( random_numbers<T>& rc, unsigned cubesize, lon
 #endif
 #endif
 		
-		double fftnorm = 1.0/(nx*ny*nz);
+		double fftnorm = 1.0/((double)nx*(double)ny*(double)nz);
 		
-#pragma omp parallel for
+		#pragma omp parallel for
 		for( int i=0; i<(int)nxc; i++ )
 			for( int j=0; j<(int)nyc; j++ )
 				for( int k=0; k<(int)nzc/2+1; k++ )
@@ -477,7 +522,7 @@ random_numbers<T>::random_numbers( random_numbers<T>& rc, unsigned cubesize, lon
 		
 		delete[] rcoarse;
 		
-#pragma omp parallel for
+		#pragma omp parallel for
 		for( int i=0; i<(int)nx; i++ )
 			for( int j=0; j<(int)ny; j++ )
 				for( int k=0; k<(int)nz/2+1; k++ )
@@ -493,7 +538,11 @@ random_numbers<T>::random_numbers( random_numbers<T>& rc, unsigned cubesize, lon
 				}
 		
 #ifdef FFTW3
+	#ifdef SINGLE_PRECISION
+		fftwf_execute( ipf );
+	#else
 		fftw_execute( ipf );
+	#endif
 #else
 #ifndef SINGLETHREAD_FFTW		
 		rfftwnd_threads_one_complex_to_real( omp_get_max_threads(), ipf, cfine, NULL );
@@ -502,21 +551,27 @@ random_numbers<T>::random_numbers( random_numbers<T>& rc, unsigned cubesize, lon
 #endif
 #endif
 		
-#pragma omp parallel for
+		#pragma omp parallel for
 		for( int i=0; i<(int)nx; i++ )
 			for( int j=0; j<(int)ny; j++ )
 				for( int k=0; k<(int)nz; k++ )
 				{
 					size_t q = ((size_t)i*ny+(size_t)j)*(nz+2)+(size_t)k;
-					(*this)(x0[0]+i,x0[1]+j,x0[2]+k) = rfine[q];
+					(*this)(x0[0]+i,x0[1]+j,x0[2]+k,false) = rfine[q];
 				}
 		
 		delete[] rfine;
 		
 #ifdef FFTW3
+	#ifdef SINGLE_PRECISION
+		fftwf_destroy_plan(pf);
+		fftwf_destroy_plan(pc);
+		fftwf_destroy_plan(ipf);
+	#else
 		fftw_destroy_plan(pf);
 		fftw_destroy_plan(pc);
 		fftw_destroy_plan(ipf);
+	#endif
 #else
 		fftwnd_destroy_plan(pf);
 		fftwnd_destroy_plan(pc);
@@ -699,145 +754,6 @@ double random_numbers<T>::fill_all( void )
 				kk = (kk+ncubes_)%ncubes_;
 				subtract_from_cube(ii,jj,kk,sum/(ncubes_*ncubes_*ncubes_));
 			}
-	
-	/////////////////////////////////////////////////////
-	
-#if defined(DEGRADE_RAND1)
-	
-	{
-		std::cerr << " - degrading field for 1 level...(" << res_ << ")\n";
-		//unsigned ixoff=51,iyoff=51,izoff=51;
-		//unsigned nx=52, ny=52, nz=52;
-		int ixoff=102, iyoff=102, izoff=102;
-		int nx=104, ny=104, nz=104;
-		
-#pragma omp parallel for
-		for( int ix=0; ix<(int)res_; ix+=2 )
-			for( int iy=0; iy<(int)res_; iy+=2 )
-				for( int iz=0; iz<(int)res_; iz+=2 )
-				{
-					if( ix>=2*ixoff && ix < 2*ixoff+nx 
-					   && iy>=2*iyoff && iy < 2*iyoff+ny
-					   && iz>=2*izoff && iz < 2*izoff+nz )
-					{
-						continue;
-					}
-					
-					double avg = 0.125*((*this)(ix,iy,iz)+(*this)(ix+1,iy,iz)+(*this)(ix,iy+1,iz)+(*this)(ix,iy,iz+1)+
-										(*this)(ix+1,iy+1,iz)+(*this)(ix+1,iy,iz+1)+(*this)(ix,iy+1,iz+1)+(*this)(ix+1,iy+1,iz+1));
-					
-					
-					
-					(*this)(ix,iy,iz) = avg;
-					(*this)(ix+1,iy,iz) = avg;
-					(*this)(ix,iy+1,iz) = avg;
-					(*this)(ix,iy,iz+1) = avg;
-					(*this)(ix+1,iy+1,iz) = avg;
-					(*this)(ix+1,iy,iz+1) = avg;
-					(*this)(ix,iy+1,iz+1) = avg;
-					(*this)(ix+1,iy+1,iz+1) = avg;
-					
-				}
-		
-		
-	}
-	
-#elif defined(DEGRADE_RAND2)
-	
-	{
-		std::cerr << " - degrading field for 2 level...(" << res_ << ")\n";
-		
-		/*unsigned ixoff2=102,iyoff2=102,izoff2=102;
-		 unsigned nx2=52, ny2=52, nz2=52;
-		 
-		 unsigned ixoff1=86,iyoff1=86,izoff1=86;
-		 unsigned nx1=168,ny1=168,nz1=168;*/
-		
-		int ixoff2=86,iyoff2=86,izoff2=86;
-		int nx2=84,ny2=84,nz2=84;
-		
-		int ixoff1=102,iyoff1=102,izoff1=102;
-		int nx1=104,ny1=104,nz1=104;
-		
-		
-		//unsigned ixoff2=51,iyoff2=51,izoff2=51;
-		//unsigned nx2=52, ny2=52, nz2=52;
-		
-		//unsigned ixoff1=34,iyoff1=34,izoff1=34;
-		//unsigned nx1=120,ny1=120,nz1=120;
-		
-		//unsigned ixoff2=84, iyoff2=84, izoff2=84;
-		//unsigned nx2=90, ny2=90, nz2=90;
-		
-		//unsigned ixoff1=100, iyoff1=100, izoff1=100;
-		//unsigned nx1=112, ny1=112, nz1=112;
-		
-		
-		/*unsigned ixoff2=100, iyoff2=100, izoff2=100;
-		 unsigned nx2=112, ny2=112, nz2=112;
-		 
-		 unsigned ixoff1=84, iyoff1=84, izoff1=84;
-		 unsigned nx1=180, ny1=180, nz1=180;*/
-		
-#pragma omp parallel for
-		for( int ix=0; ix<(int)res_; ix+=2 )
-			for( int iy=0; iy<(int)res_; iy+=2 )
-				for( int iz=0; iz<(int)res_; iz+=2 )
-				{
-					if( ix>=2*ixoff2 && ix < 2*ixoff2+nx2 
-					   && iy>=2*iyoff2 && iy < 2*iyoff2+ny2
-					   && iz>=2*izoff2 && iz < 2*izoff2+nz2 )
-					{
-						continue;
-					}
-					
-					double avg = 0.125*((*this)(ix,iy,iz)+(*this)(ix+1,iy,iz)+(*this)(ix,iy+1,iz)+(*this)(ix,iy,iz+1)+
-										(*this)(ix+1,iy+1,iz)+(*this)(ix+1,iy,iz+1)+(*this)(ix,iy+1,iz+1)+(*this)(ix+1,iy+1,iz+1));
-					
-					
-					
-					(*this)(ix,iy,iz) = avg;
-					(*this)(ix+1,iy,iz) = avg;
-					(*this)(ix,iy+1,iz) = avg;
-					(*this)(ix,iy,iz+1) = avg;
-					(*this)(ix+1,iy+1,iz) = avg;
-					(*this)(ix+1,iy,iz+1) = avg;
-					(*this)(ix,iy+1,iz+1) = avg;
-					(*this)(ix+1,iy+1,iz+1) = avg;
-					
-				}
-		
-#pragma omp parallel for
-		for( int ix=0; ix<(int)res_; ix+=4 )
-			for( int iy=0; iy<(int)res_; iy+=4 )
-				for( int iz=0; iz<(int)res_; iz+=4 )
-				{
-					if( ix>=2*ixoff1 && ix < 2*ixoff1+nx1
-					   && iy>=2*iyoff1 && iy < 2*iyoff1+ny1
-					   && iz>=2*izoff1 && iz < 2*izoff1+nz1 )
-					{
-						continue;
-					}
-					double avg = 0.0;//0.125*((*this)(ix,iy,iz)+(*this)(ix+1,iy,iz)+(*this)(ix,iy+1,iz)+(*this)(ix,iy,iz+1)+
-									 //(*this)(ix+1,iy+1,iz)+(*this)(ix+1,iy,iz+1)+(*this)(ix,iy+1,iz+1)+(*this)(ix+1,iy+1,iz+1));
-					for( int i=0; i<4; ++i )
-						for( int j=0; j<4; ++j )
-							for( int k=0; k<4; ++k )
-								avg += (*this)(ix+i,iy+j,iz+k);
-					avg /=4.*4.*4.;
-					
-					for( int i=0; i<4; ++i )
-						for( int j=0; j<4; ++j )
-							for( int k=0; k<4; ++k )
-								(*this)(ix+i,iy+j,iz+k) = avg;
-				}
-		
-		
-	}
-#endif
-	
-	
-	/////////////////////////////////////////////////////
 	
 	return sum/(ncubes_*ncubes_*ncubes_);
 }
@@ -1032,10 +948,10 @@ void random_number_generator<rng,T>::correct_avg( int icoarse, int ifine )
 			throw std::runtime_error("White noise file mismatch. This should not happen. Notify a developer!");
 		
 		int nxd(nxf/2),nyd(nyf/2),nzd(nzf/2);
-		std::vector<T> deg_rand( nxd*nyd*nzd, 0.0 );
+		std::vector<T> deg_rand( (size_t)nxd*(size_t)nyd*(size_t)nzd, 0.0 );
 		double fac = 1.0/sqrt(8.0);
 		
-		for( int i=0; i<nxf; i+=2 )
+		for( int i=0, ic=0; i<nxf; i+=2, ic++ )
 		{	
 			std::vector<T> fine_rand( 2*nyf*nzf, 0.0 );
 			iffine.read( reinterpret_cast<char*> (&fine_rand[0]), 2*nyf*nzf*sizeof(T) );
@@ -1044,20 +960,26 @@ void random_number_generator<rng,T>::correct_avg( int icoarse, int ifine )
 			for( int j=0; j<nyf; j+=2 )
 				for( int k=0; k<nzf; k+=2 )
 				{
-					unsigned qc = ((i/2)*nyd+(j/2))*nzd+(k/2);
-					unsigned qf[8];
-					qf[0] = (0*nyf+j+0)*nzf+k+0;
-					qf[1] = (0*nyf+j+0)*nzf+k+1;
-					qf[2] = (0*nyf+j+1)*nzf+k+0;
-					qf[3] = (0*nyf+j+1)*nzf+k+1;
-					qf[4] = (1*nyf+j+0)*nzf+k+0;
-					qf[5] = (1*nyf+j+0)*nzf+k+1;
-					qf[6] = (1*nyf+j+1)*nzf+k+0;
-					qf[7] = (1*nyf+j+1)*nzf+k+1;
+					int jc = j/2, kc = k/2;
+					//size_t qc = (((size_t)i/2)*(size_t)nyd+((size_t)j/2))*(size_t)nzd+((size_t)k/2);
+					size_t qc = ((size_t)(ic*nyd+jc))*(size_t)nzd+(size_t)kc;
 					
+					size_t qf[8];
+					qf[0] = (0*(size_t)nyf+(size_t)j+0)*(size_t)nzf+(size_t)k+0;
+					qf[1] = (0*(size_t)nyf+(size_t)j+0)*(size_t)nzf+(size_t)k+1;
+					qf[2] = (0*(size_t)nyf+(size_t)j+1)*(size_t)nzf+(size_t)k+0;
+					qf[3] = (0*(size_t)nyf+(size_t)j+1)*(size_t)nzf+(size_t)k+1;
+					qf[4] = (1*(size_t)nyf+(size_t)j+0)*(size_t)nzf+(size_t)k+0;
+					qf[5] = (1*(size_t)nyf+(size_t)j+0)*(size_t)nzf+(size_t)k+1;
+					qf[6] = (1*(size_t)nyf+(size_t)j+1)*(size_t)nzf+(size_t)k+0;
+					qf[7] = (1*(size_t)nyf+(size_t)j+1)*(size_t)nzf+(size_t)k+1;
+					
+					double d = 0.0;
 					for( int q=0; q<8; ++q )
-						deg_rand[qc] += fac*fine_rand[qf[q]];
+						d += fac*fine_rand[qf[q]];
 					
+					//deg_rand[qc] += d;
+					deg_rand[qc] = d;
 				}
 		}
 		
@@ -1081,8 +1003,8 @@ void random_number_generator<rng,T>::correct_avg( int icoarse, int ifine )
 					if( i+di < 0 || i+di >= nxc || j+dj < 0 || j+dj >= nyc || k+dk < 0 || k+dk >= nzc )
 						continue;
 					
-					unsigned qc = ((i+di)*nyc+(j+dj))*nzc+(k+dk);
-					unsigned qcd = (i*nyd+j)*nzd+k;
+					size_t qc = (((size_t)i+(size_t)di)*(size_t)nyc+((size_t)j+(size_t)dj))*(size_t)nzc+(size_t)(k+dk);
+					size_t qcd = (size_t)(i*nyd+j)*(size_t)nzd+(size_t)k;
 					
 					coarse_rand[qc] = deg_rand[qcd];
 				}
@@ -1120,21 +1042,21 @@ void random_number_generator<rng,T>::correct_avg( int icoarse, int ifine )
 					if( i+di < 0 || i+di >= nxc || j+dj < 0 || j+dj >= nyc || k+dk < 0 || k+dk >= nzc )
 						continue;
 					
-					unsigned qf[8];
-					qf[0] = ((2*i+0)*nyf+2*j+0)*nzf+2*k+0;
-					qf[1] = ((2*i+0)*nyf+2*j+0)*nzf+2*k+1;
-					qf[2] = ((2*i+0)*nyf+2*j+1)*nzf+2*k+0;
-					qf[3] = ((2*i+0)*nyf+2*j+1)*nzf+2*k+1;
-					qf[4] = ((2*i+1)*nyf+2*j+0)*nzf+2*k+0;
-					qf[5] = ((2*i+1)*nyf+2*j+0)*nzf+2*k+1;
-					qf[6] = ((2*i+1)*nyf+2*j+1)*nzf+2*k+0;
-					qf[7] = ((2*i+1)*nyf+2*j+1)*nzf+2*k+1;
+					size_t qf[8];
+					qf[0] = (size_t)((2*i+0)*nyf+2*j+0)*(size_t)nzf+(size_t)(2*k+0);
+					qf[1] = (size_t)((2*i+0)*nyf+2*j+0)*(size_t)nzf+(size_t)(2*k+1);
+					qf[2] = (size_t)((2*i+0)*nyf+2*j+1)*(size_t)nzf+(size_t)(2*k+0);
+					qf[3] = (size_t)((2*i+0)*nyf+2*j+1)*(size_t)nzf+(size_t)(2*k+1);
+					qf[4] = (size_t)((2*i+1)*nyf+2*j+0)*(size_t)nzf+(size_t)(2*k+0);
+					qf[5] = (size_t)((2*i+1)*nyf+2*j+0)*(size_t)nzf+(size_t)(2*k+1);
+					qf[6] = (size_t)((2*i+1)*nyf+2*j+1)*(size_t)nzf+(size_t)(2*k+0);
+					qf[7] = (size_t)((2*i+1)*nyf+2*j+1)*(size_t)nzf+(size_t)(2*k+1);
 					
 					double finesum = 0.0;
 					for( int q=0; q<8; ++q )
 						finesum += fac*(*mem_cache_[ifine-levelmin_])[qf[q]];
 					
-					size_t qc = ((size_t)(i+di)*nyc+(size_t)(j+dj))*nzc+(size_t)(k+dk);
+					size_t qc = ((size_t)(i+di)*nyc+(size_t)(j+dj))*(size_t)nzc+(size_t)(k+dk);
 					
 					(*mem_cache_[icoarse-levelmin_])[qc] = finesum;
 				}						

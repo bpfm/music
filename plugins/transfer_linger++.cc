@@ -15,11 +15,11 @@ class transfer_MUSIC_plugin : public transfer_function_plugin
 	
 private:
 	std::string m_filename_Pk, m_filename_Tk;
-	std::vector<double> m_tab_k, m_tab_Tk_tot, m_tab_Tk_cdm, m_tab_Tk_baryon, m_tab_Tvk_cdm, m_tab_Tvk_baryon;
-	gsl_interp_accel *acc_dtot, *acc_dcdm, *acc_dbaryon, *acc_vcdm, *acc_vbaryon;
-	gsl_spline *spline_dtot, *spline_dcdm, *spline_dbaryon, *spline_vcdm, *spline_vbaryon;
+	std::vector<double> m_tab_k, m_tab_Tk_tot, m_tab_Tk_cdm, m_tab_Tk_baryon, m_tab_Tvk_cdm, m_tab_Tvk_baryon, m_tab_Tk_tot0;
+	gsl_interp_accel *acc_dtot, *acc_dcdm, *acc_dbaryon, *acc_vcdm, *acc_vbaryon, *acc_dtot0;
+	gsl_spline *spline_dtot, *spline_dcdm, *spline_dbaryon, *spline_vcdm, *spline_vbaryon, *spline_dtot0;
 	
-	
+	bool m_bnovrel;	
 	
 	void read_table( void ){
 #ifdef WITH_MPI
@@ -41,6 +41,7 @@ private:
 			m_tab_Tk_baryon.clear();
 			m_tab_Tvk_cdm.clear();
 			m_tab_Tvk_baryon.clear();
+			m_tab_Tk_tot0.clear();
 			
 			const double zero = 1e-10;
 			
@@ -51,20 +52,27 @@ private:
 				
 				std::stringstream ss(line);
 				
-				double k, Tkc, Tkb, Tktot, Tkvc, Tkvb;
+				double k, Tkc, Tkb, Tktot, Tkvc, Tkvb, Tktot0;
 				ss >> k;
 				ss >> Tktot;
 				ss >> Tkc;
 				ss >> Tkb;
 				ss >> Tkvc;
 				ss >> Tkvb;
-				
+                ss >> Tktot0;
+
+		if( m_bnovrel )
+		{
+			std::cerr << " - transfer_linger++ : disabling baryon-DM relative velocity\n";
+			Tkvb = Tkvc;
+		}		
 				Tktot = std::max(zero,Tktot);
 				Tkc   = std::max(zero,Tkc);
 				Tkb   = std::max(zero,Tkb);
 				Tkvc  = std::max(zero,Tkvc);
 				Tkvb  = std::max(zero,Tkvb);
-				
+                Tktot0= std::max(zero,Tktot0);
+								
 				m_tab_k.push_back( log10(k) );
 				
 				m_tab_Tk_tot.push_back( log10(Tktot) );
@@ -72,6 +80,8 @@ private:
 				m_tab_Tk_cdm.push_back( log10(Tkc) );
 				m_tab_Tvk_cdm.push_back( log10(Tkvc) );
 				m_tab_Tvk_baryon.push_back( log10(Tkvb) );
+                m_tab_Tk_tot0.push_back( log10(Tktot0) );
+				
 			}
 			
 			ifs.close();			
@@ -88,6 +98,7 @@ private:
 			m_tab_Tk_baryon.assign(n,0);
 			m_tab_Tvk_cdm.assign(n,0);
 			m_tab_Tvk_baryon.assign(n,0);
+            m_tab_Tk_tot0.assign(n,0);
 		}
 		
 		MPI::COMM_WORLD.Bcast( &m_tab_k[0],  n, MPI_DOUBLE, 0 );
@@ -96,6 +107,8 @@ private:
 		MPI::COMM_WORLD.Bcast( &m_tab_Tk_baryon[0], n, MPI_DOUBLE, 0 );
 		MPI::COMM_WORLD.Bcast( &m_tab_Tvk_cdm[0], n, MPI_DOUBLE, 0 );
 		MPI::COMM_WORLD.Bcast( &m_tab_Tvk_baryon[0], n, MPI_DOUBLE, 0 );
+        MPI::COMM_WORLD.Bcast( &m_tab_Tk_tot0[0], n, MPI_DOUBLE, 0 );
+		
 #endif
 		
 	}
@@ -105,7 +118,8 @@ public:
 	: transfer_function_plugin( cf )
 	{
 		m_filename_Tk = pcf_->getValue<std::string>("cosmology","transfer_file");
-		
+		m_bnovrel = pcf_->getValueSafe<bool>("cosmology","no_vrel",false);
+
 		read_table( );
 		
 		acc_dtot = gsl_interp_accel_alloc();
@@ -113,21 +127,27 @@ public:
 		acc_dbaryon = gsl_interp_accel_alloc();
 		acc_vcdm = gsl_interp_accel_alloc();
 		acc_vbaryon = gsl_interp_accel_alloc();
+		acc_dtot0 = gsl_interp_accel_alloc();
 		
 		spline_dtot = gsl_spline_alloc( gsl_interp_cspline, m_tab_k.size() );
 		spline_dcdm = gsl_spline_alloc( gsl_interp_cspline, m_tab_k.size() );
 		spline_dbaryon = gsl_spline_alloc( gsl_interp_cspline, m_tab_k.size() );
 		spline_vcdm = gsl_spline_alloc( gsl_interp_cspline, m_tab_k.size() );
 		spline_vbaryon = gsl_spline_alloc( gsl_interp_cspline, m_tab_k.size() );
+		spline_dtot0 = gsl_spline_alloc( gsl_interp_cspline, m_tab_k.size() );
 		
 		gsl_spline_init (spline_dtot, &m_tab_k[0], &m_tab_Tk_tot[0], m_tab_k.size() );
 		gsl_spline_init (spline_dcdm, &m_tab_k[0], &m_tab_Tk_cdm[0], m_tab_k.size() );
 		gsl_spline_init (spline_dbaryon, &m_tab_k[0], &m_tab_Tk_baryon[0], m_tab_k.size() );
 		gsl_spline_init (spline_vcdm, &m_tab_k[0], &m_tab_Tvk_cdm[0], m_tab_k.size() );
 		gsl_spline_init (spline_vbaryon, &m_tab_k[0], &m_tab_Tvk_baryon[0], m_tab_k.size() );
+		gsl_spline_init (spline_dtot0, &m_tab_k[0], &m_tab_Tk_tot0[0], m_tab_k.size() );
 		
-		tf_distinct_ = true;
-		tf_withvel_  = true;
+        
+		tf_distinct_   = true;
+		tf_withvel_    = true;
+        tf_withtotal0_ = true;
+		tf_velunits_   = true;
 	}
 	
 	~transfer_MUSIC_plugin()
@@ -137,12 +157,14 @@ public:
 		gsl_spline_free (spline_dbaryon);
 		gsl_spline_free (spline_vcdm);
 		gsl_spline_free (spline_vbaryon);
+		gsl_spline_free (spline_dtot0);
 		
 		gsl_interp_accel_free (acc_dtot);
 		gsl_interp_accel_free (acc_dcdm);
 		gsl_interp_accel_free (acc_dbaryon);
 		gsl_interp_accel_free (acc_vcdm);
 		gsl_interp_accel_free (acc_vbaryon);
+        gsl_interp_accel_free (acc_dtot0);
 	}
 	
 	inline double extrap_left( double k, const tf_type& type ) 
@@ -172,6 +194,10 @@ public:
 			case total: 
 				v1 = m_tab_Tk_tot[0];
 				v2 = m_tab_Tk_tot[1];
+				break;
+            case total0:
+                v1 = m_tab_Tk_tot0[0];
+				v2 = m_tab_Tk_tot0[1];
 				break;
 				
 			default:
@@ -213,6 +239,10 @@ public:
 				v1 = m_tab_Tk_tot[n1];
 				v2 = m_tab_Tk_tot[n];
 				break;
+            case total0:
+                v1 = m_tab_Tk_tot0[n1];
+                v2 = m_tab_Tk_tot0[n];
+                break;
 				
 			default:
 				throw std::runtime_error("Invalid type requested in transfer function evaluation");
@@ -255,7 +285,9 @@ public:
 				return pow(10.0, gsl_spline_eval (spline_vbaryon, lk, acc_vbaryon) );
 			case total: 
 				return pow(10.0, gsl_spline_eval (spline_dtot, lk, acc_dtot) );
-				
+            case total0:
+                return pow(10.0, gsl_spline_eval (spline_dtot0, lk, acc_dtot0) );
+                
 			default:
 				throw std::runtime_error("Invalid type requested in transfer function evaluation");
 		}
@@ -274,7 +306,7 @@ public:
 };
 
 namespace{
-	transfer_function_plugin_creator_concrete< transfer_MUSIC_plugin > creator("music");
+	transfer_function_plugin_creator_concrete< transfer_MUSIC_plugin > creator("linger++");
 }
 
 
