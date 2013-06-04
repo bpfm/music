@@ -93,7 +93,6 @@ void modify_grid_for_TF( const refinement_hierarchy& rh_full, refinement_hierarc
 	lmax				= cf.getValue<unsigned>( "setup", "levelmax" );
 	lbaseTF				= cf.getValueSafe<unsigned>( "setup", "levelmin_TF", lbase );
 	overlap				= cf.getValueSafe<unsigned>( "setup", "overlap", 4 );
-	
 	rh_TF = rh_full;
 	
 	unsigned pad = overlap;
@@ -113,6 +112,7 @@ void modify_grid_for_TF( const refinement_hierarchy& rh_full, refinement_hierarc
 		
 		//... make sure that grids are divisible by 4 for convolution.
 		lxmax += lxmax%4;
+		
 		
 		for( int j=0; j<3; ++j )
 		{
