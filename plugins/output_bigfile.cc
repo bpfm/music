@@ -5,8 +5,12 @@
  * 
  * Copyright (C) 2010  Oliver Hahn
  * 
- * Plugin: Dylan Nelson (dnelson@cfa.harvard.edu)
+ * Plugin: Yu Feng(yfeng1@berkeley.edu)
+ *
+ * ( Modified from output_arepo.cc )
  */
+
+#ifdef HAVE_BIGFILE
  
 #define GAS_PARTTYPE 0
 #define HIGHRES_DM_PARTTYPE 1
@@ -22,6 +26,7 @@
 extern "C" {
 #include <bigfile.h>
 }
+
 template<typename T>
 const char * typestring( void )
 {
@@ -596,4 +601,4 @@ public:
 namespace{
 	output_plugin_creator_concrete< bigfile_output_plugin > creator("bigfile");
 }
-
+#endif /*BIGFILE*/

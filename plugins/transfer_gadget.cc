@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-//! Implementation of abstract base class TransferFunction for the Eisenstein & Hu transfer function 
+//! Implementation of abstract base class TransferFunction.
 /*!
  This class implements the power spectrum files used in CMU simulations.
  the file lists log10 of k (in Mpc/h) and Pk( Mpc/h, ^-3).
@@ -18,6 +18,10 @@
  The tilt is included in the power spectrum; baryon and dm are the same.
 
  we convert back to transfer function from these files by removing k** ns.
+
+ Yu Feng <yfeng1@berkeley.edu>
+
+ Most of the core code is from MP-Gadget3/GenIC which originated from N-GenIC.
 
  */
 class transfer_gadget_plugin : public transfer_function_plugin
