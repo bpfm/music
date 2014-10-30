@@ -125,7 +125,23 @@ protected:
     template<typename T>
 	void writeHDF5_b( std::string fieldName, int coord, int partTypeNum, std::vector<T> &data, bool readFlag = false )
 	{
-        bigfilehelper(fieldName, partTypeNum, data, 3, !readFlag);
+        std::vector<T> data1(data.size() * 3);
+        size_t i;
+        if(readFlag) {
+            bigfilehelper(fieldName, partTypeNum, data1, 3, false);
+            for(i = 0; i < data.size(); i ++) {
+                data[i] = data1[3 * i + coord];
+            }
+            return;
+        }
+
+        if(coord != 0) {
+            bigfilehelper(fieldName, partTypeNum, data1, 3, false);
+        }
+        for(i = 0; i < data.size(); i ++) {
+            data1[3 * i + coord] = data[i];
+        }
+        bigfilehelper(fieldName, partTypeNum, data1, 3, true);
 	}
 	
 	// called from finalize()
