@@ -210,6 +210,8 @@ public:
 		time   = 1.0/(1.0+redshift);
 		posFac = 3.085678e24 / UnitLength_in_cm; // MUSIC uses Mpc internally, i.e. posFac=1e3 for kpc output
 		velFac = ( 1.0f / sqrt(time) ) * boxSize; // TODO: should be normalized by posFac?
+                                                  // YU: No; it agrees
+                                                  // with N-GenIC without posFac.
 		
 		// critical density
 		rhoCrit = 27.7519737e-9; // in h^2 1e10 M_sol / kpc^3
