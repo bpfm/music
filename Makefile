@@ -1,9 +1,17 @@
 ##############################################################################
 ### compile time configuration options
+##
+## these are defaults, overriden by Makefile.site
+##
 FFTW3		= yes
 MULTITHREADFFTW	= yes
 SINGLEPRECISION	= no
 HAVEHDF5        = yes
+
+HAVEBIGFILE     = no
+BIGFILE_INCDIR = ${HOME}/source/bigfile/src
+BIGFILE_LIBDIR = ${HOME}/source/bigfile/src
+
 HAVEBOXLIB	= no
 BOXLIB_HOME     = ${HOME}/nyx_tot_sterben/BoxLib
 
@@ -13,8 +21,11 @@ CC      = g++
 OPT     = -Wall -Wno-unknown-pragmas -O3 -g -mtune=native
 CFLAGS  =  
 LFLAGS  = -lgsl -lgslcblas 
-CPATHS  = -I. -I$(HOME)/local/include -I/opt/local/include -I/usr/local/include
-LPATHS  = -L$(HOME)/local/lib -L/opt/local/lib -L/usr/local/lib
+CPATHS  = -I. -I$(HOME)/local/include -I/opt/local/include -I/usr/local/include 
+LPATHS  = -L$(HOME)/local/lib -L/opt/local/lib -L/usr/local/lib 
+
+## now include the site customized Makefile
+include Makefile.site
 
 ##############################################################################
 # if you have FFTW 2.1.5 or 3.x with multi-thread support, you can enable the 
@@ -73,6 +84,14 @@ ifeq ($(strip $(HAVEHDF5)), yes)
 endif
 
 ##############################################################################
+#if you have BIGFILE installed, you can also enable the following options
+ifeq ($(strip $(HAVEBIGFILE)), yes)
+OPT += -DHAVE_BIGFILE
+LFLAGS += -lbigfile
+LPATHS += -L$(BIGFILE_LIBDIR)
+CPATHS += -I$(BIGFILE_INCDIR)
+endif
+##############################################################################
 CFLAGS += $(OPT)
 TARGET  = MUSIC
 OBJS    = output.o transfer_function.o Numerics.o defaults.o constraints.o random.o\
@@ -113,7 +132,6 @@ endif
 
 %.o: %.cc *.hh Makefile 
 	$(CC) $(CFLAGS) $(CPATHS) -c $< -o $@
-
 clean:
 	rm -rf $(OBJS)
 ifeq ($(strip $(HAVEBOXLIB)), yes)
